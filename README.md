@@ -4,7 +4,8 @@ repeat task.wait(0.1) until game:IsLoaded()
 getgenv().main = false
 getgenv().alt  = true
 
-getgenv().AltAccounts  = {"abafarmer96877567", "abafarmer912747567", "grandfarmer357215", "RicefarmerGrand1893"}
+getgenv().MainAccounts = {"Onett10i83"}
+getgenv().AltAccounts  = {"abafarmer912747567", "grandfarmer357215", "RicefarmerGrand1893", "abafarmer96877567"}
 -- ==================
 
 setfpscap(30)
@@ -15,35 +16,70 @@ local HttpService = game:GetService("HttpService")
 local UIS = game:GetService("UserInputService")
 local LP = Players.LocalPlayer
 
--- ตรวจว่ามี alt อยู่ในเซิฟไหม (เฉพาะ main) — ตรวจตอนเริ่ม + ทุก 30 นาที
+-- MAIN: ตรวจว่ามี alt ในเซิฟ ถ้าไม่มีให้ hop (ตรวจตอนเริ่ม + ทุก 30 นาที)
 task.spawn(function()
 	if not getgenv().main then return end
-	task.wait(5) -- รอ player list โหลดก่อน
-
+	task.wait(5)
 	local function checkAlts()
 		local found = false
 		for _, alt in ipairs(getgenv().AltAccounts) do
-			if Players:FindFirstChild(alt) then
-				found = true
-				break
-			end
+			if Players:FindFirstChild(alt) then found = true break end
 		end
 		if not found then
 			warn("[WWHub] Alt not found — hopping server...")
-			pcall(function()
-				game:GetService("TeleportService"):TeleportToRandomPlace(game.PlaceId)
-			end)
+			pcall(function() game:GetService("TeleportService"):TeleportToRandomPlace(game.PlaceId) end)
 		else
-			warn("[WWHub] Alt found — staying in server")
+			warn("[WWHub] Alt found — staying")
 		end
 	end
-
-	checkAlts() -- ตรวจครั้งแรกตอนเริ่ม
-
+	checkAlts()
 	while true do
-		task.wait(60 * 30) -- รอ 30 นาที
+		task.wait(60 * 30)
 		if not getgenv().main then break end
 		checkAlts()
+	end
+end)
+
+-- ALT: ตรวจว่ามี main ในเซิฟ ถ้าไม่เจอใน 10 นาทีให้ hop จนกว่าจะเจอ
+task.spawn(function()
+	if not getgenv().alt then return end
+	task.wait(5)
+	local function checkMain()
+		for _, name in ipairs(getgenv().MainAccounts) do
+			if Players:FindFirstChild(name) then return true end
+		end
+		return false
+	end
+	-- ตรวจแรก: รอ 10 นาที ถ้าไม่เจอ main เลยให้ hop
+	local found = false
+	for _ = 1, 60 do -- loop 60 ครั้ง x 10 วิ = 10 นาที
+		if checkMain() then found = true break end
+		task.wait(10)
+	end
+	if not found then
+		warn("[WWHub] Main not found after 10min — hopping...")
+		pcall(function() game:GetService("TeleportService"):TeleportToRandomPlace(game.PlaceId) end)
+		return
+	end
+	-- หลังจากนั้น loop check เรื่อยๆ ถ้า main หายไปแล้วไม่กลับมาใน 10 นาทีก็ hop
+	while true do
+		task.wait(10)
+		if not getgenv().alt then break end
+		if not checkMain() then
+			warn("[WWHub] Main left server — waiting 10min before hop...")
+			local came_back = false
+			for _ = 1, 60 do
+				task.wait(10)
+				if checkMain() then came_back = true break end
+			end
+			if not came_back then
+				warn("[WWHub] Main still gone — hopping...")
+				pcall(function() game:GetService("TeleportService"):TeleportToRandomPlace(game.PlaceId) end)
+				break
+			else
+				warn("[WWHub] Main came back — staying")
+			end
+		end
 	end
 end)
 
@@ -77,7 +113,7 @@ local pressedKChar     = nil
 local timerTpDone      = false
 local gui              = nil
 
-local pointCapLimit = 10000
+local pointCapLimit = 100000
 
 local _request
 if not pcall(function()
@@ -91,16 +127,29 @@ local WebhookURL = "https://discord.com/api/webhooks/1453628734090514533/ddACObJ
 local function sendWebhook(label)
 	task.spawn(function()
 		pcall(function()
-			local moneyText, lvlText, pts = "N/A", "N/A", "N/A"
+			local moneyText, lvlText, pts, altCount = "N/A", "N/A", "N/A", 0
 			pcall(function()
 				moneyText = tostring(LP:WaitForChild("ReplicatedStats"):WaitForChild("Gold").Value)
 				local hud = LP.PlayerGui:FindFirstChild("HUD")
 				if hud then
-					local lvlObj = hud:FindFirstChild("RightBotCorner") and hud.RightBotCorner:FindFirstChild("Line2") and hud.RightBotCorner.Line2:FindFirstChild("Lvl")
+					local lvlObj = hud:FindFirstChild("RightBotCorner")
+						and hud.RightBotCorner:FindFirstChild("Line2")
+						and hud.RightBotCorner.Line2:FindFirstChild("Lvl")
 					if lvlObj then lvlText = lvlObj.Text end
 				end
 				pts = tostring(LP.leaderstats.Points.Value)
 			end)
+			-- นับ alt ในเซิฟ
+			for _, alt in ipairs(getgenv().AltAccounts) do
+				if Players:FindFirstChild(alt) then altCount += 1 end
+			end
+			local altNames = {}
+			for _, alt in ipairs(getgenv().AltAccounts) do
+				if Players:FindFirstChild(alt) then
+					table.insert(altNames, alt)
+				end
+			end
+			local altList = #altNames > 0 and table.concat(altNames, "\n") or "None"
 			_request({
 				Url    = WebhookURL,
 				Method = "POST",
@@ -114,6 +163,8 @@ local function sendWebhook(label)
 							{ name = "Money",  value = moneyText, inline = true },
 							{ name = "Level",  value = lvlText,   inline = true },
 							{ name = "Points", value = pts,       inline = true },
+							{ name = "Alts in Server", value = altCount .. " / " .. #getgenv().AltAccounts, inline = true },
+							{ name = "Alt Names", value = altList, inline = false },
 						},
 						footer = { text = os.date("%d/%m/%Y %H:%M:%S") }
 					}}
@@ -390,12 +441,11 @@ local function getBlockedFarmMode()
 	return nil
 end
 
--- drain lives: ฆ่าตัวซ้ำจน StockCount = 0
+-- drain lives: reset ซ้ำจนกว่า mode lives/juggernaut จะหมดเลย
 local function drainLives()
-	local lives = getLives()
-	if lives <= 0 then return end
-	print("[WWHub] Draining lives: " .. lives)
-	while gui and gui.Parent and lives > 0 and (loopMain or loopAlt) do
+	print("[WWHub] Draining lives until round ends...")
+	while gui and gui.Parent and (loopMain or loopAlt) do
+		if not getBlockedFarmMode() then break end
 		local char = getChar()
 		if char then
 			local hum = char:FindFirstChildOfClass("Humanoid")
@@ -405,10 +455,9 @@ local function drainLives()
 		local nc = getChar()
 		if nc then afterCharacterLoaded(nc) end
 		task.wait(0.5)
-		lives = getLives()
-		print("[WWHub] Lives left: " .. lives)
+		print("[WWHub] Lives left: " .. getLives())
 	end
-	print("[WWHub] Lives drained")
+	print("[WWHub] Round ended — resuming farm")
 end
 
 local function pauseFarmForRound(reason)
@@ -712,11 +761,11 @@ stopBtn.MouseButton1Click:Connect(function()
 	setStatus("Idle")
 end)
 capMinus.MouseButton1Click:Connect(function()
-	pointCapLimit = math.max(500, pointCapLimit - 500)
+	pointCapLimit = math.max(10000, pointCapLimit - 10000)
 	capLbl.Text = "🎯 Point Cap: " .. pointCapLimit
 end)
 capPlus.MouseButton1Click:Connect(function()
-	pointCapLimit = pointCapLimit + 500
+	pointCapLimit = pointCapLimit + 10000
 	capLbl.Text = "🎯 Point Cap: " .. pointCapLimit
 end)
 renderBtn.MouseButton1Click:Connect(function()
@@ -745,23 +794,59 @@ task.spawn(function()
 	end
 end)
 
+-- นับ alt ที่อยู่ในเซิฟ
+local function countAltsInServer()
+	local count = 0
+	for _, alt in ipairs(getgenv().AltAccounts) do
+		if Players:FindFirstChild(alt) then
+			count += 1
+		end
+	end
+	return count
+end
+
 -- Status sync
 task.spawn(function()
 	while gui and gui.Parent do
+		local altCount = countAltsInServer()
+		local altStr = " | alt=" .. altCount .. "/" .. #getgenv().AltAccounts
+
 		if starting then
+			statusLbl.TextColor3 = Color3.fromRGB(255, 200, 50)
+			statusLbl.Font       = Enum.Font.GothamBold
+			statusLbl.TextSize   = 13
 			setStatus("Starting...")
 		elseif roundPaused then
-			setStatus("⏸ " .. (roundPauseReason or "Paused"))
+			statusLbl.TextColor3 = Color3.fromRGB(255, 80, 80)
+			statusLbl.Font       = Enum.Font.GothamBold
+			statusLbl.TextSize   = 13
+			setStatus("⏸ " .. (roundPauseReason or "Paused") .. altStr)
 		elseif timerTpDone then
-			setStatus("⏱ End of round — safe zone")
+			statusLbl.TextColor3 = Color3.fromRGB(255, 165, 0)
+			statusLbl.Font       = Enum.Font.GothamBold
+			statusLbl.TextSize   = 13
+			setStatus("⏱ Safe zone" .. altStr)
 		elseif pointsCapped then
-			setStatus("🎯 Cap! pts=" .. getPoints() .. " t=" .. getTimerValue())
+			statusLbl.TextColor3 = Color3.fromRGB(255, 215, 0)
+			statusLbl.Font       = Enum.Font.GothamBold
+			statusLbl.TextSize   = 13
+			setStatus("🎯 Cap! pts=" .. getPoints() .. altStr)
 		elseif loopAlt then
-			setStatus("💀 ALT | t=" .. getTimerValue())
+			-- ALT: เด่น สีเขียวสว่าง ตัวใหญ่
+			statusLbl.TextColor3 = Color3.fromRGB(80, 255, 140)
+			statusLbl.Font       = Enum.Font.GothamBold
+			statusLbl.TextSize   = 14
+			setStatus("💀 ALT | t=" .. getTimerValue() .. altStr)
 		elseif loopMain then
-			setStatus("🎮 MAIN | t=" .. getTimerValue())
+			statusLbl.TextColor3 = Color3.fromRGB(100, 200, 255)
+			statusLbl.Font       = Enum.Font.GothamBold
+			statusLbl.TextSize   = 14
+			setStatus("🎮 MAIN | t=" .. getTimerValue() .. altStr)
 		else
-			setStatus("Idle")
+			statusLbl.TextColor3 = Color3.fromRGB(140, 140, 165)
+			statusLbl.Font       = Enum.Font.Gotham
+			statusLbl.TextSize   = 13
+			setStatus("Idle" .. altStr)
 		end
 		task.wait(0.5)
 	end
@@ -863,43 +948,48 @@ end)
 local TeleportService = game:GetService("TeleportService")
 local placeId = game.PlaceId
 
-game:GetService("Players").LocalPlayer.OnTeleport:Connect(function(state)
+local function rejoin()
+	pcall(function() sendWebhook("🔄 Rejoining — kicked/disconnected") end)
+	task.wait(3)
+	pcall(function() TeleportService:Teleport(placeId) end)
+	-- fallback ถ้า Teleport ไม่ทำงาน
+	task.wait(3)
+	pcall(function() TeleportService:TeleportToRandomPlace(placeId) end)
+end
+
+-- จับ kick ทุกประเภท
+-- 1) OnTeleport: kicked by server/mod
+LP.OnTeleport:Connect(function(state)
 	if state == Enum.TeleportState.RequestedFromServer then
-		-- โดน kick by server/mod → rejoin
 		task.wait(3)
-		TeleportService:Teleport(placeId)
+		rejoin()
 	end
 end)
 
--- ตรวจ network disconnect
-game:GetService("RunService").Heartbeat:Connect(function()
-	-- ถ้า workspace หาย = disconnect
+-- 2) AncestryChanged: LocalPlayer ถูก remove = kicked/disconnect
+LP.AncestryChanged:Connect(function(_, parent)
+	if not parent then rejoin() end
 end)
 
--- วิธีหลัก: ฟัง event kick
+-- 3) Kicked event: "kicked by the game" ตรงๆ
 pcall(function()
-	game:GetService("Players").LocalPlayer.Chatted:Connect(function() end) -- keep alive
+	LP.Kicked:Connect(function()
+		rejoin()
+	end)
 end)
 
-local function rejoin()
-	pcall(function()
-		sendWebhook("🔄 Rejoining — disconnected/kicked")
-	end)
-	task.wait(3)
-	pcall(function() TeleportService:Teleport(placeId) end)
-end
-
--- ตรวจ parent ของ LocalPlayer หาย = kicked
+-- 4) Heartbeat watchdog: ถ้า ping หาย / network timeout
 task.spawn(function()
-	local player = game:GetService("Players").LocalPlayer
-	player.AncestryChanged:Connect(function(_, parent)
-		if not parent then
-			rejoin()
-		end
+	local lastBeat = tick()
+	game:GetService("RunService").Heartbeat:Connect(function()
+		lastBeat = tick()
 	end)
-end)
-
--- ตรวจ game close/network fail
-game:BindToClose(function()
-	-- ไม่ทำอะไร รอ rejoin จาก AncestryChanged
+	while true do
+		task.wait(10)
+		if tick() - lastBeat > 15 then
+			-- Heartbeat หยุดนานเกิน 15 วิ = network ตาย
+			rejoin()
+			break
+		end
+	end
 end)
