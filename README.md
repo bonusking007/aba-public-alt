@@ -8,7 +8,7 @@ getgenv().MainAccounts = {"Onett10i83", "DITR08394", "GodJirazo83641"}
 getgenv().AltAccounts  = {"Yoko_7822", "IbukiGames8927", "keiichi3742", "coconaphoenix", "ErikoShadow2413", "Shingo_3587", "Gardirime87348", "Laisbeppu11284", "Musatvizzi3621", "abafarmer96877567", "abafarmer912747567", "RicefarmerGrand1893", "grandfarmer357215", "Minesonos8632"}
 -- ==================
 
-setfpscap(30)
+setfpscap(20)
 local Players = game:GetService("Players")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local VirtualUser = game:GetService("VirtualUser")
