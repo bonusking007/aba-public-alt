@@ -3,7 +3,7 @@ repeat task.wait(0.1) until game:IsLoaded()
 -- ===== CONFIG =====
 _G.main  = {"igll89dwjm52", "ephe53qzzu56", "Shuhua_Ping"}
 _G.alt   = {"ojexrppy9770", "rwfi55ngxj28", "vgakarhu6240", "ibdm14ljog99", "bnevporw3273", "mhqdcvee3722", "dagasvqp5610", "Laisbeppu11284", "Musatvizzi3621", "abafarmer96877567", "abafarmer912747567", "RicefarmerGrand1893", "grandfarmer357215", "Minesonos8632"}
-_G.guard = {"Gaeul_4122"} -- ใส่ชื่อ guard ตรงนี้
+_G.guard = {"Gaeul_4122", "qaaxvbyw5047"} -- ใส่ชื่อ guard ตรงนี้
 -- ==================
 
 setfpscap(25)
@@ -584,7 +584,7 @@ local function getTargets()
 	return targets
 end
 
--- G spam สำหรับ main
+-- G spam สำหรับ main เท่านั้น (guard ใช้ของตัวเอง)
 task.spawn(function()
 	while gui and gui.Parent do
 		if loopMain and not roundPaused and not timerTpDone and not starting then
@@ -1009,44 +1009,88 @@ task.spawn(function()
 	end
 end)
 
--- Guard loop
+-- Guard loop (fixed: ไม่ spam CFrame, validate target ทุกรอบ, แยก interval ให้ชัด)
 task.spawn(function()
+	local lastTpTime = 0
+	local lastM1Time = 0
+	local lastGTime  = 0
+	local TP_INTERVAL = 0.4   -- TP ไปหา target ทุก 0.4 วิ (เดิม 0.15 วิ หนักเกิน)
+	local M1_INTERVAL = 0.15  -- fireM1 ทุก 0.15 วิ
+	local G_INTERVAL  = 0.3   -- pressG ทุก 0.3 วิ
+
 	while gui.Parent do
 		if not loopGuard then task.wait(1) continue end
+
 		local targets = getTargets()
 		if #targets == 0 then task.wait(2) continue end
+
 		for _, target in ipairs(targets) do
 			if not loopGuard or not gui.Parent then break end
+
+			-- validate target ใหม่ทุกครั้ง
 			local tChar = target.Character
-			if not tChar then continue end
+			if not tChar or not tChar.Parent then continue end
+
 			local tHRP = tChar:FindFirstChild("HumanoidRootPart")
-			if not tHRP then continue end
+			if not tHRP or not tHRP.Parent then continue end
+
 			local hrp = getHRP()
 			if not hrp then continue end
+
+			-- TP ครั้งแรก
 			pcall(function()
 				hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
 				hrp.CFrame = tHRP.CFrame * CFrame.new(0, 0, 3)
 			end)
-			task.wait(0.2)
+			lastTpTime = tick()
+			task.wait(0.3)
+
+			-- โจมตี 5 วิ
 			local attackEnd = tick() + 5
-			while tick() < attackEnd and loopGuard do
-				fireM1()
-				task.wait(0.1)
-				pressG()
-				task.wait(0.05)
+			while tick() < attackEnd and loopGuard and gui.Parent do
+				local now = tick()
+
+				-- validate target ทุกรอบ
+				tChar = target.Character
+				if not tChar or not tChar.Parent then break end
 				tHRP = tChar:FindFirstChild("HumanoidRootPart")
-				if not tHRP then break end
+				if not tHRP or not tHRP.Parent then break end
 				hrp = getHRP()
-				if hrp then
+				if not hrp then break end
+
+				-- TP ตาม target (throttled)
+				if now - lastTpTime >= TP_INTERVAL then
 					pcall(function()
 						hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
 						hrp.CFrame = tHRP.CFrame * CFrame.new(0, 0, 3)
 					end)
+					lastTpTime = now
 				end
+
+				-- M1 (throttled)
+				if now - lastM1Time >= M1_INTERVAL then
+					fireM1()
+					lastM1Time = now
+				end
+
+				-- G (throttled)
+				if now - lastGTime >= G_INTERVAL then
+					pressG()
+					lastGTime = now
+				end
+
+				task.wait(0.1)
 			end
-			if loopGuard then fireSkills() end
-			task.wait(0.3)
+
+			-- skills หลังโจมตี
+			if loopGuard then
+				fireSkills()
+			end
+
+			task.wait(0.5) -- พักก่อนไป target ถัดไป
 		end
+
+		task.wait(0.2)
 	end
 end)
 
