@@ -3,7 +3,7 @@ repeat task.wait(0.1) until game:IsLoaded()
 -- ===== CONFIG =====
 _G.main  = {"igll89dwjm52", "ephe53qzzu56", "Shuhua_Ping"}
 _G.alt   = {"ojexrppy9770", "rwfi55ngxj28", "vgakarhu6240", "ibdm14ljog99", "bnevporw3273", "mhqdcvee3722", "dagasvqp5610", "Laisbeppu11284", "Musatvizzi3621", "abafarmer96877567", "abafarmer912747567", "RicefarmerGrand1893", "grandfarmer357215", "Minesonos8632"}
-_G.guard = {"Gaeul_4122", "qaaxvbyw5047"} -- ใส่ชื่อ guard ตรงนี้
+_G.guard = {"Gaeul_4122", "qaaxvbyw5047"}
 -- ==================
 
 setfpscap(25)
@@ -59,13 +59,14 @@ task.spawn(function()
 		end
 		return false
 	end
+	-- รอ main สูงสุด 10 นาที (เดิม 5 นาที) ให้ main มีเวลา load/rejoin
 	local found = false
-	for _ = 1, 30 do
+	for _ = 1, 60 do
 		if checkMain() then found = true break end
 		task.wait(10)
 	end
 	if not found then
-		warn("[WWHub] No main after 5min — hopping...")
+		warn("[WWHub] No main after 10min — hopping...")
 		pcall(function() TS:TeleportToRandomPlace(game.PlaceId) end)
 		return
 	end
@@ -74,12 +75,13 @@ task.spawn(function()
 		if not IS_ALT then break end
 		if not checkMain() then
 			local back = false
-			for _ = 1, 30 do
+			-- รอ main กลับมา 10 นาที (เดิม 5 นาที) ก่อน hop
+			for _ = 1, 60 do
 				task.wait(10)
 				if checkMain() then back = true break end
 			end
 			if not back then
-				warn("[WWHub] Main gone 5min — hopping...")
+				warn("[WWHub] Main gone 10min — hopping...")
 				pcall(function() TS:TeleportToRandomPlace(game.PlaceId) end)
 				break
 			end
@@ -1022,89 +1024,144 @@ task.spawn(function()
 	end
 end)
 
--- Guard loop (fixed: ไม่ spam CFrame, validate target ทุกรอบ, แยก interval ให้ชัด)
+-- Guard loop
+-- แยก 2 thread: (1) Heartbeat ติดตาม target ทุก frame (2) attack/mode-switch loop
+-- ถ้าไม่มี target นอกจาก main/alt/guard → switch ไปทำ alt แทน
+-- ถ้ามี target → กลับมา guard ทันที (ไม่ leak thread)
+local guardCurrentTarget = nil
+local guardActingAsAlt   = false  -- true = กำลังทำหน้าที่ alt อยู่
+
+-- Thread 1: Heartbeat tracking
+local guardTrackConn = nil
+local function startGuardTracking()
+	if guardTrackConn then guardTrackConn:Disconnect() guardTrackConn = nil end
+	guardTrackConn = RunService.Heartbeat:Connect(function()
+		if not loopGuard or not gui or not gui.Parent then
+			guardTrackConn:Disconnect() guardTrackConn = nil return
+		end
+		local target = guardCurrentTarget
+		if not target then return end
+		local tChar = target.Character
+		if not tChar or not tChar.Parent then return end
+		local tHRP = tChar:FindFirstChild("HumanoidRootPart")
+		if not tHRP or not tHRP.Parent then return end
+		local hrp = getHRP()
+		if not hrp then return end
+		pcall(function()
+			hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
+			hrp.AssemblyAngularVelocity = Vector3.new(0,0,0)
+			hrp.CFrame = tHRP.CFrame * CFrame.new(0, 0, 2.5)
+		end)
+	end)
+end
+
+-- Thread 2: Attack / mode-switch loop
 task.spawn(function()
-	local lastTpTime = 0
 	local lastM1Time = 0
 	local lastGTime  = 0
-	local TP_INTERVAL = 0.4   -- TP ไปหา target ทุก 0.4 วิ (เดิม 0.15 วิ หนักเกิน)
-	local M1_INTERVAL = 0.15  -- fireM1 ทุก 0.15 วิ
-	local G_INTERVAL  = 0.3   -- pressG ทุก 0.3 วิ
+	local M1_INTERVAL = 0.15
+	local G_INTERVAL  = 0.35
+
+	local function stopGuardAlt()
+		if not guardActingAsAlt then return end
+		guardActingAsAlt = false
+		-- หยุด alt behavior (ไม่ลบ loopAlt เพราะ loopGuard เป็นคนคุม)
+		warn("[WWHub] Guard: target found — switching back to GUARD")
+	end
+
+	local function startGuardAlt()
+		if guardActingAsAlt then return end
+		guardActingAsAlt = true
+		guardCurrentTarget = nil
+		warn("[WWHub] Guard: no targets — acting as ALT")
+		-- TP ไปฟาร์มพร้อม alt
+		task.spawn(function()
+			task.wait(0.5)
+			if guardActingAsAlt and loopGuard then
+				local nc = getChar()
+				if nc then afterCharLoaded(nc) end
+				task.wait(0.3)
+				tpAndVerify(altCFrame)
+			end
+		end)
+	end
 
 	while gui.Parent do
-		if not loopGuard then task.wait(1) continue end
+		if not loopGuard then
+			-- cleanup ทั้งหมดเมื่อ guard หยุด
+			guardCurrentTarget = nil
+			guardActingAsAlt = false
+			if guardTrackConn then guardTrackConn:Disconnect() guardTrackConn = nil end
+			task.wait(1)
+			continue
+		end
+
+		if not guardTrackConn then startGuardTracking() end
 
 		local targets = getTargets()
-		if #targets == 0 then task.wait(2) continue end
+
+		-- ไม่มี target → ทำหน้าที่ alt
+		if #targets == 0 then
+			guardCurrentTarget = nil
+			if not guardActingAsAlt then startGuardAlt() end
+
+			-- ขณะทำ alt: ยืนนิ่งที่ altCFrame เดียว ไม่ทำอะไรทั้งนั้น
+			if not roundPaused and not timerTpDone then
+				if not isNearCF(altCFrame, tpDistLimit) then
+					tpAndVerify(altCFrame)
+				end
+			end
+			task.wait(2) -- เช็ค target ใหม่ทุก 2 วิ (ไม่ leak)
+			continue
+		end
+
+		-- มี target → กลับมา guard
+		if guardActingAsAlt then stopGuardAlt() end
 
 		for _, target in ipairs(targets) do
 			if not loopGuard or not gui.Parent then break end
+			-- ถ้ามี target ใหม่เข้ามากลางคัน break ออกไปเช็คใหม่
+			if getTargets() ~= targets then break end
 
-			-- validate target ใหม่ทุกครั้ง
 			local tChar = target.Character
 			if not tChar or not tChar.Parent then continue end
-
 			local tHRP = tChar:FindFirstChild("HumanoidRootPart")
 			if not tHRP or not tHRP.Parent then continue end
 
-			local hrp = getHRP()
-			if not hrp then continue end
+			guardCurrentTarget = target
+			task.wait(0.1)
 
-			-- TP ครั้งแรก
-			pcall(function()
-				hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
-				hrp.CFrame = tHRP.CFrame * CFrame.new(0, 0, 3)
-			end)
-			lastTpTime = tick()
-			task.wait(0.3)
-
-			-- โจมตี 5 วิ
 			local attackEnd = tick() + 5
 			while tick() < attackEnd and loopGuard and gui.Parent do
 				local now = tick()
 
-				-- validate target ทุกรอบ
 				tChar = target.Character
 				if not tChar or not tChar.Parent then break end
 				tHRP = tChar:FindFirstChild("HumanoidRootPart")
 				if not tHRP or not tHRP.Parent then break end
-				hrp = getHRP()
-				if not hrp then break end
 
-				-- TP ตาม target (throttled)
-				if now - lastTpTime >= TP_INTERVAL then
-					pcall(function()
-						hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
-						hrp.CFrame = tHRP.CFrame * CFrame.new(0, 0, 3)
-					end)
-					lastTpTime = now
-				end
-
-				-- M1 (throttled)
 				if now - lastM1Time >= M1_INTERVAL then
-					fireM1()
-					lastM1Time = now
+					fireM1() lastM1Time = now
 				end
-
-				-- G (throttled)
 				if now - lastGTime >= G_INTERVAL then
-					pressG()
-					lastGTime = now
+					pressG() lastGTime = now
 				end
 
 				task.wait(0.1)
 			end
 
-			-- skills หลังโจมตี
-			if loopGuard then
-				fireSkills()
-			end
-
-			task.wait(0.5) -- พักก่อนไป target ถัดไป
+			if loopGuard then fireSkills() end
+			guardCurrentTarget = nil
+			task.wait(0.3)
 		end
 
-		task.wait(0.2)
+		task.wait(0.1)
 	end
+
+	-- cleanup เมื่อ gui ถูก destroy
+	guardCurrentTarget = nil
+	guardActingAsAlt = false
+	if guardTrackConn then guardTrackConn:Disconnect() guardTrackConn = nil end
 end)
 
 task.spawn(function()
@@ -1119,19 +1176,42 @@ task.spawn(function()
 end)
 
 -- Auto rejoin
+-- เงื่อนไข rejoin: โดน kick จริงๆ หรือ server teleport เท่านั้น
+-- ไม่ rejoin จาก Heartbeat freeze (เพราะ setfpscap(25) ทำให้ lag ได้) 
+-- ไม่ rejoin จาก AncestryChanged (trigger ได้ตอน respawn)
 local placeId = game.PlaceId
+local recentlyTeleported = false
+
 local function rejoin()
+	if recentlyTeleported then return end
+	recentlyTeleported = true
 	pcall(function() sendWebhook("🔄 Rejoining") end)
 	task.wait(3)
 	pcall(function() TS:Teleport(placeId) end)
-	task.wait(3)
+	task.wait(5)
 	pcall(function() TS:TeleportToRandomPlace(placeId) end)
 end
-LP.OnTeleport:Connect(function(s) if s==Enum.TeleportState.RequestedFromServer then task.wait(3) rejoin() end end)
-LP.AncestryChanged:Connect(function(_,p) if not p then rejoin() end end)
-pcall(function() LP.Kicked:Connect(function() rejoin() end) end)
+
+-- Kicked เท่านั้น (server teleport ไม่ rejoin เพราะ trigger ได้จาก round reset / alt hop)
+pcall(function()
+	LP.Kicked:Connect(function()
+		warn("[WWHub] Kicked — rejoining")
+		rejoin()
+	end)
+end)
+
+-- Heartbeat watchdog: เพิ่ม threshold เป็น 60 วิ และเช็คว่าไม่ใช่แค่ lag
 task.spawn(function()
 	local last = tick()
 	RunService.Heartbeat:Connect(function() last = tick() end)
-	while true do task.wait(10) if tick()-last > 15 then rejoin() break end end
+	while true do
+		task.wait(30)
+		local gap = tick() - last
+		-- freeze จริงๆ คือ > 60 วิ ไม่ใช่แค่ lag หรือ FPS ต่ำ
+		if gap > 60 then
+			warn("[WWHub] Heartbeat frozen " .. math.floor(gap) .. "s — rejoining")
+			rejoin()
+			break
+		end
+	end
 end)
