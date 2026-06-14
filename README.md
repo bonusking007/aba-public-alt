@@ -368,14 +368,27 @@ end
 task.spawn(function()
 	while gui and gui.Parent do
 		if loopAlt and not roundPaused and not timerTpDone and not starting then
-			if isCharReady() then
-				local hum = getHum()
-				if hum and hum.MaxHealth > 0 and (hum.Health / hum.MaxHealth) < 0.9 then
-					warn("[WWHub] Alt HP < 90% — resetting")
+			local hum = getHum()
+			local hrp = getHRP()
+			if hum and hrp then
+				local hpRatio = hum.MaxHealth > 0 and (hum.Health / hum.MaxHealth) or 1
+				local isAlive = hum.Health > 0 and hrp.Position.Y > -100
+				-- HP < 90% ให้ reset ทันที ไม่ต้องรอ isCharReady()
+				if isAlive and hpRatio < 0.9 then
+					warn("[WWHub] Alt HP < 90% (" .. math.floor(hpRatio*100) .. "%) — resetting")
 					pcall(function() hum.Health = 0 end)
 					task.wait(1.5)
 					local waited = 0
-					repeat task.wait(0.5) waited += 0.5 until isCharReady() or waited > 10
+					repeat task.wait(0.5) waited += 0.5 until isCharReady() or waited > 12
+					local nc = getChar()
+					if nc then afterCharLoaded(nc) end
+					task.wait(0.5)
+					if loopAlt and not roundPaused then tpAndVerify(altCFrame) end
+				-- ตายแล้วแต่ยังไม่ respawn ให้รอแล้วจัดการ
+				elseif not isAlive and hum.Health <= 0 then
+					warn("[WWHub] Alt already dead — waiting respawn")
+					local waited = 0
+					repeat task.wait(0.5) waited += 0.5 until isCharReady() or waited > 12
 					local nc = getChar()
 					if nc then afterCharLoaded(nc) end
 					task.wait(0.5)
