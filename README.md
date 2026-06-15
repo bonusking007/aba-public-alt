@@ -224,7 +224,7 @@ end
 local function tpAndVerify(cf)
 	if not tpToCF(cf) then return false end
 	task.delay(watchdogTime, function()
-		if gui and gui.Parent and not selectingTeam and (loopAlt or loopMain)
+		if gui and gui.Parent and not selectingTeam and (loopAlt or loopMain or loopGuard)
 			and not isNearCF(cf,tpDistLimit) and not timerTpDone and not roundPaused then
 			tpToCF(cf)
 		end
@@ -833,11 +833,11 @@ task.spawn(function()
 					selectingTeam = false
 				end)
 			end
-			-- TP ไป altCFrame ตลอดเหมือน alt
+			-- TP เหมือน alt 100% ใช้ tpAndVerify + watchdog
 			if not selectingTeam and not isNearCF(altCFrame, tpDistLimit) then
-				tpToCF(altCFrame)
+				tpAndVerify(altCFrame)
 			end
-			task.wait(0.5)
+			task.wait(0.08)
 			continue
 		end
 
